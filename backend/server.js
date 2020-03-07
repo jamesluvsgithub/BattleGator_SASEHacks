@@ -8,13 +8,31 @@ const server = http.createServer(app);
 const io     = new Server(server);
 
 const PORT = process.env.PORT || 3000;
+const HARDWARE_TOKEN = process.env.HARDWARE_TOKEN;
+
+// BattleGator uses a 7-by-7 grid.
+const GRID_ROWS = 7;
+const GRID_COLS = 7;
+
+const hardwareState = {
+  player1: { row: null, col: null, special: false },
+  player2: { row: null, col: null, special: false }
+};
+
+function decodeOneHot(byte, limit) {
+  if (!Number.isInteger(byte) || byte < 0 || byte > 127) return null;
+  if (byte === 0 || (byte & (byte - 1)) !== 0) return null;
+
+  const index = Math.log2(byte);
+  return index < limit ? index : null;
+}
 
 app.use(express.static(path.join(__dirname, '../frontend')));
 app.use(express.json());
 
-const players    = {};  
-const shipData   = {};  
-const readyState = {};  
+const players    = {};
+const shipData   = {};
+const readyState = {};
 let   gameActive = false;
 let   turn       = 'player1';
 
@@ -55,7 +73,7 @@ io.on('connection', (socket) => {
     console.log(`${role} placed ships:`, ships);
 
     const otherRole = role === 'player1' ? 'player2' : 'player1';
-    const otherId   = getId(otherRole);
+    const otherId = getId(otherRole);
     if (otherId) io.to(otherId).emit('opponentReady');
 
     if (bothReady()) {
@@ -72,11 +90,14 @@ io.on('connection', (socket) => {
 
   socket.on('attack', ({ row, col }) => {
     const role = players[socket.id];
-    if (!gameActive)   return;
+    if (!gameActive) return;
     if (role !== turn) return;
 
+    if (!Number.isInteger(row) || row < 0 || row >= GRID_ROWS ||
+        !Number.isInteger(col) || col < 0 || col >= GRID_COLS) return;
+
     const targetRole = role === 'player1' ? 'player2' : 'player1';
-    const targetId   = getId(targetRole);
+    const targetId = getId(targetRole);
     if (targetId) {
       io.to(targetId).emit('incomingAttack', { row, col });
     }
@@ -85,7 +106,7 @@ io.on('connection', (socket) => {
   socket.on('attackResult', ({ row, col, result }) => {
     const defenderRole = players[socket.id];
     const attackerRole = defenderRole === 'player1' ? 'player2' : 'player1';
-    const attackerId   = getId(attackerRole);
+    const attackerId = getId(attackerRole);
 
     if (attackerId) {
       io.to(attackerId).emit('attackResult', { row, col, result });
@@ -103,21 +124,21 @@ io.on('connection', (socket) => {
     }
   });
 
-socket.on('gameOver', ({ winner }) => {
-  const otherRole = winner === 'player1' ? 'player2' : 'player1';
-  const otherId = getId(otherRole);
-  if (otherId) io.to(otherId).emit('gameOver', { winner });
-  gameActive = false;
-  console.log(`Game over! ${winner} wins.`);
-});
-  
+  socket.on('gameOver', ({ winner }) => {
+    const otherRole = winner === 'player1' ? 'player2' : 'player1';
+    const otherId = getId(otherRole);
+    if (otherId) io.to(otherId).emit('gameOver', { winner });
+    gameActive = false;
+    console.log(`Game over! ${winner} wins.`);
+  });
+
   socket.on('disconnect', () => {
     const role = players[socket.id];
     console.log(`Disconnected: ${socket.id} (${role})`);
 
     if (gameActive && role) {
       const otherRole = role === 'player1' ? 'player2' : 'player1';
-      const otherId   = getId(otherRole);
+      const otherId = getId(otherRole);
       if (otherId) io.to(otherId).emit('opponentDisconnected');
     }
 
@@ -125,6 +146,9 @@ socket.on('gameOver', ({ winner }) => {
     if (role) {
       delete readyState[role];
       delete shipData[role];
+      hardwareState[role] = {
+        row: null, col: null, special: false
+      };
     }
 
     gameActive = false;
@@ -132,29 +156,73 @@ socket.on('gameOver', ({ winner }) => {
   });
 });
 
-app.post('/hardware-attack', (req, res) => {
-  const { row, col } = req.body;
-  if (row === undefined || col === undefined) {
-    return res.status(400).json({ error: 'Missing row or col' });
+// Receive a hardware input from Python.
+app.post('/hardware-input', (req, res) => {
+  if (!HARDWARE_TOKEN) {
+    return res.status(503).json({
+      error: 'HARDWARE_TOKEN is not configured'
+    });
   }
 
-  const r = parseInt(row);
-  const c = parseInt(col);
-  if (r < 0 || r > 1 || c < 0 || c > 6) {
-    return res.status(400).json({ error: 'Out of bounds (grid is 2x7)' });
+  if (req.get('x-hardware-token') !== HARDWARE_TOKEN) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  if (!gameActive) {
-    return res.status(400).json({ error: 'Game not active yet' });
+  const { player, row_byte, col_byte, special } = req.body || {};
+
+  if (player !== 'player1' && player !== 'player2') {
+    return res.status(400).json({ error: 'Invalid player' });
   }
 
-  console.log(`Hardware attack: row=${r}, col=${c} — routing to ${turn}`);
-  const currentId = getId(turn);
-  if (currentId) io.to(currentId).emit('hardwareAttack', { row: r, col: c });
+  const current = hardwareState[player];
+  const row = decodeOneHot(row_byte, GRID_ROWS);
+  const col = decodeOneHot(col_byte, GRID_COLS);
 
-  res.json({ ok: true, row: r, col: c, firedFor: turn });
+  // Remember the last valid row/column selection.
+  if (row !== null) current.row = row;
+  if (col !== null) current.col = col;
+
+  // Detect the rising edge of the special button.
+  const pressed = special === 1 || special === true;
+  const risingEdge = pressed && !current.special;
+  current.special = pressed;
+
+  const playerId = getId(player);
+
+  if (playerId) {
+    io.to(playerId).emit('hardwareInput', {
+      row: current.row,
+      col: current.col,
+      special: pressed
+    });
+  }
+
+  // Fire only on a new press and only on this player's turn.
+  const fire =
+    risingEdge &&
+    gameActive &&
+    turn === player &&
+    current.row !== null &&
+    current.col !== null &&
+    !!playerId;
+
+  if (fire) {
+    io.to(playerId).emit('hardwareAttack', {
+      row: current.row,
+      col: current.col
+    });
+  }
+
+  res.json({
+    ok: true,
+    player,
+    row: current.row,
+    col: current.col,
+    special: pressed,
+    fired: fire
+  });
 });
 
 server.listen(PORT, () => {
-  console.log(`\n BattleGator server running at http://localhost:${PORT}\n`);
+  console.log(`\nBattleGator server running at http://localhost:${PORT}\n`);
 });

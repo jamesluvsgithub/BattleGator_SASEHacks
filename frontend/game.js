@@ -1,4 +1,4 @@
-const GRID_ROWS = 2;
+const GRID_ROWS = 7;
 const GRID_COLS = 7;
 
 const SHIPS = [
@@ -17,48 +17,49 @@ const state = {
   placedShips:     {},
   selectedShip:    0,
   awaitingConfirm: false,
-  hoverCells:      []
+  hoverCells:      [],
+  hardwareSelection: { row: null, col: null, special: false }
 };
 
 const SPRITE = {
   tube1: {
-    idle:     'assets/Sprites/1tube_idle.gif',
+    idle: 'assets/Sprites/1tube_idle.gif',
     attacked: 'assets/Sprites/1tube_attacked.gif',
-    end:      'assets/Sprites/1tube_ending.gif',
+    end: 'assets/Sprites/1tube_ending.gif',
   },
   top2: {
-    idle:     'assets/Sprites/top2tube_idle.gif',
+    idle: 'assets/Sprites/top2tube_idle.gif',
     attacked: 'assets/Sprites/top2tube_attacked.gif',
-    end:      'assets/Sprites/top2tube_ending.gif',
+    end: 'assets/Sprites/top2tube_ending.gif',
   },
   bottom2: {
-    idle:     'assets/Sprites/bottom2tube_idle.gif',
+    idle: 'assets/Sprites/bottom2tube_idle.gif',
     attacked: 'assets/Sprites/bottom2tube_attacked.gif',
-    end:      'assets/Sprites/bottom2tube_ending.gif',
+    end: 'assets/Sprites/bottom2tube_ending.gif',
   },
   left3: {
-    idle:     'assets/Sprites/left3tube_gatorsprite_idle.gif',
+    idle: 'assets/Sprites/left3tube_gatorsprite_idle.gif',
     attacked: 'assets/Sprites/left3tube_attacked.gif',
-    end:      'assets/Sprites/left3tube_ending.gif',
+    end: 'assets/Sprites/left3tube_ending.gif',
   },
   mid3: {
-    idle:     'assets/Sprites/mid3tube_gatorsprite_idle.gif',
+    idle: 'assets/Sprites/mid3tube_gatorsprite_idle.gif',
     attacked: 'assets/Sprites/mid3tube_attacked.gif',
-    end:      'assets/Sprites/mid3tube_ending.gif',
+    end: 'assets/Sprites/mid3tube_ending.gif',
   },
   right3: {
-    idle:     'assets/Sprites/right3tube_gatorsprite_idle.gif',
+    idle: 'assets/Sprites/right3tube_gatorsprite_idle.gif',
     attacked: 'assets/Sprites/right3tube_attacked.gif',
-    end:      'assets/Sprites/right3tube_ending.gif',
+    end: 'assets/Sprites/right3tube_ending.gif',
   },
   miss: {
     anim: 'assets/Sprites/miss_animation.gif',
-    end:  'assets/Sprites/miss_ending.png',
+    end: 'assets/Sprites/miss_ending.png',
   },
   hit: {
-  anim: 'assets/Sprites/hit_animation.gif',
-  end:  'assets/Sprites/hit_animation_end.gif',
-}
+    anim: 'assets/Sprites/hit_animation.gif',
+    end: 'assets/Sprites/hit_animation_end.gif',
+  }
 };
 
 const Sounds = {
@@ -68,7 +69,7 @@ const Sounds = {
   redo: new Audio('assets/SoundEffects/trash.mp3'),
   winning: new Audio('assets/SoundEffects/winning.mp3'),
   losing: new Audio('assets/SoundEffects/losing.mp3'),
-}
+};
 
 Object.values(Sounds).forEach(s => { s.preload = 'auto'; s.load(); });
 
@@ -92,22 +93,42 @@ try {
   });
 
 
-socket.on('attackResult', ({ row, col, result }) => {
-  applyAttackResult(state.enemyGrid, row, col, result);
-  setTimeout(() => {
-    renderBoard('enemy-board', state.enemyGrid, false);
-    updateStatus(result === 'hit'  ? ' BOOOOM YOU HIT GO AGAIN'  :
-                 result === 'sunk' ? 'BOOOOM YOU HIT GO AGAIN' : 'rip you missed opponent turn now');
-    checkWin();
-  }, GIF_DURATION.attacked + 200);
-});
+  socket.on('attackResult', ({ row, col, result }) => {
+    applyAttackResult(state.enemyGrid, row, col, result);
+    setTimeout(() => {
+      renderBoard('enemy-board', state.enemyGrid, false);
+      updateStatus(result === 'hit'  ? 'BOOOOM YOU HIT GO AGAIN' :
+                   result === 'sunk' ? 'BOOOOM YOU HIT GO AGAIN' : 'rip you missed opponent turn now');
+      checkWin();
+    }, GIF_DURATION.attacked + 200);
+  });
 
-socket.on('yourTurn', () => {
-  if (state.gameOver) return;
-  state.myTurn = true;
-  updateStatus('click a cell to defloat a SASEgator!');
-});
+  socket.on('yourTurn', () => {
+    if (state.gameOver) return;
+    state.myTurn = true;
+    updateStatus('click a cell to defloat a SASEgator!');
+  });
 
+  // Receive hardware selection for this player.
+  socket.on('hardwareInput', ({ row, col, special }) => { 
+    
+    state.hardwareSelection = { row, col, special };
+
+    document.querySelectorAll('#enemy-board .hardware-selected').forEach(el => el.classList.remove('hardware-selected'));
+
+    if (Number.isInteger(row) && Number.isInteger(col) &&
+        row >= 0 && row < GRID_ROWS &&
+        col >= 0 && col < GRID_COLS) {
+
+      const cell = document.querySelector(
+        `#enemy-board [data-row="${row}"][data-col="${col}"]`
+      );
+
+      if (cell) cell.classList.add('hardware-selected');
+    }
+  });
+
+  // Special button press triggers an attack.
   socket.on('hardwareAttack', ({ row, col }) => {
     if (state.myTurn && !state.gameOver) fireAt(row, col);
   });
@@ -168,7 +189,6 @@ function getPlacementCell(r, c) {
   return board ? board.querySelector(`[data-row="${r}"][data-col="${c}"]`) : null;
 }
 
-
 function buildSpriteMap() {
   const map = {};
   Object.entries(state.placedShips).forEach(([shipIndex, cells]) => {
@@ -198,7 +218,7 @@ function getShipSprite(shipIndex, pos, total) {
 }
 
 function getIdleSprite(pos, total) {
-  return SPRITE[getSpriteKey(pos,total)].idle;
+  return SPRITE[getSpriteKey(pos, total)].idle;
 }
 
 function getAttackedSprite(pos, total) {
@@ -206,7 +226,7 @@ function getAttackedSprite(pos, total) {
 }
 
 function getEndSprite(pos, total) {
-  return SPRITE[getSpriteKey(pos,total)].end;
+  return SPRITE[getSpriteKey(pos, total)].end;
 }
 
 
@@ -216,7 +236,7 @@ function playSound(name) {
     sound.volume = 1.0;
     const promise = sound.play();
     if (promise) promise.catch(() => {});
-  } catch(e) {}
+  } catch (e) {}
 }
 
 
@@ -317,7 +337,7 @@ function placementHover(row, col) {
   const ship = SHIPS[state.selectedShip];
   if (!ship || state.placedShips[state.selectedShip] !== undefined) return;
   const cells = getPreviewCells(row, col, ship.size);
-  const valid  = canPlace(state.playerGrid, row, col, ship.size, true);
+  const valid = canPlace(state.playerGrid, row, col, ship.size, true);
   state.hoverCells = cells;
   for (const { r, c } of cells) {
     const el = getPlacementCell(r, c);
@@ -338,7 +358,6 @@ function placementClick(row, col) {
   const cells = getPreviewCells(row, col, ship.size);
   state.placedShips[state.selectedShip] = cells;
   for (const { r, c } of cells) state.playerGrid[r][c] = 'ship';
-  console.log('playing place sound', Sounds.place.src);
   playSound('place');
 
   const btn = document.getElementById(`ship-btn-${state.selectedShip}`);
@@ -348,7 +367,7 @@ function placementClick(row, col) {
   if (next !== -1) {
     selectShip(next);
   } else {
-    state.selectedShip    = null;
+    state.selectedShip = null;
     state.awaitingConfirm = true;
     updateStatus('all gators placed! press any button to confirm!');
     document.getElementById('ready-btn').disabled = false;
@@ -386,8 +405,8 @@ function readyUp() {
 function showBattle() {
   state.placementDone = true;
   document.getElementById('placement-section').style.display = 'none';
-  document.getElementById('battle-section').style.display   = 'block';
-  renderBoard('enemy-board',  state.enemyGrid,  false);
+  document.getElementById('battle-section').style.display = 'block';
+  renderBoard('enemy-board', state.enemyGrid, false);
   renderBoard('player-board', state.playerGrid, true);
 }
 
@@ -397,7 +416,7 @@ function fireAt(row, col) {
   const cell = state.enemyGrid[row][col];
   if (cell === 'hit' || cell === 'miss' || cell === 'sunk') return;
   if (!state.myTurn || state.gameOver) return;
-  state.myTurn = false; 
+  state.myTurn = false;
   if (socket) {
     socket.emit('attack', { row, col });
   } else {
@@ -422,7 +441,7 @@ function applyAttackResult(grid, row, col, result) {
   const boardId  = (grid === state.playerGrid) ? 'player-board' : 'enemy-board';
   const isPlayer = (grid === state.playerGrid);
   const spriteMap = isPlayer ? buildSpriteMap() : {};
-  const sprite    = spriteMap[`${row}_${col}`];
+  const sprite = spriteMap[`${row}_${col}`];
 
   grid[row][col] = (result === 'hit' || result === 'sunk') ? result : 'miss';
 
@@ -431,10 +450,10 @@ function applyAttackResult(grid, row, col, result) {
       playAttack(boardId, row, col, sprite.pos, sprite.total);
     } else {
   const board = document.getElementById(boardId);
-  const cell  = board?.querySelector(`[data-row="${row}"][data-col="${col}"]`);
+  const cell = board?.querySelector(`[data-row="${row}"][data-col="${col}"]`);
 
   if (cell) {
-    cell.innerHTML = `<img src="${SPRITE.hit.anim}" width="64" height="64">`;
+    cell.innerHTML =`<img src="${SPRITE.hit.anim}" width="64" height="64">`;
     setTimeout(() => {
       cell.innerHTML = `<img src="${SPRITE.hit.end}" width="64" height="64">`;
     }, GIF_DURATION.attacked + 200);
@@ -459,8 +478,8 @@ function showGameOver(iWon) {
   const overlay = document.getElementById('gameover-overlay');
   const title   = document.getElementById('gameover-title');
   const msg     = document.getElementById('gameover-msg');
-  title.textContent = iWon ? 'VICTORYYY YOU WIN'  : 'DEFEATED GG';
-  msg.textContent   = iWon
+  title.textContent = iWon ? 'VICTORYYY YOU WIN' : 'DEFEATED GG';
+  msg.textContent = iWon
     ? 'You defloated all the gators!'
     : 'Your gators got defloated...';
   overlay.style.display = 'flex';
