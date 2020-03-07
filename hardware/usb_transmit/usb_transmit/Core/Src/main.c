@@ -26,6 +26,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "usbd_cdc_if.h"
+
+#include <stdint.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -34,7 +36,9 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define NUM_UARTS 4
+#define SOF 0xFA
+#define PACKET_SIZE 5
+#define PLAYER_DATA_SIZE 4
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -43,22 +47,62 @@
 
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef huart1;
-UART_HandleTypeDef huart2;
-UART_HandleTypeDef huart3;
-UART_HandleTypeDef huart4;
 
-UART_HandleTypeDef& P1R = huart1;
-UART_HandleTypeDef& P1C = huart2;
 
 /* USER CODE BEGIN PV */
 
-static uint8_t uart_rx[NUM_UARTS];
+/**
+ * @brief Single-byte UART reception buffer.
+ *
+ * HAL_UART_Receive_IT() receives one byte at a time.
+ */
+static uint8_t uart_rx;
 
-static volatile uint8_t player_data[NUM_UARTS];
-static volatile uint8_t data_updated = 0;
+/**
+ * @brief Temporary buffer used to assemble a UART packet.
+ *
+ * Packet format:
+ *   [0] SOF (0xFA)
+ *   [1] Player 1 Row + Special
+ *   [2] Player 1 Column
+ *   [3] Player 2 Row + Special
+ *   [4] Player 2 Column
+ */
+static uint8_t rx_packet[PACKET_SIZE];
 
-/* Persistent USB transmit buffer */
-static uint8_t usb_buffer[NUM_UARTS];
+/**
+ * @brief Index of the next expected packet byte.
+ *
+ * 0 indicates that the receiver is waiting for SOF.
+ */
+static uint8_t rx_index = 0;
+
+/**
+ * @brief Most recently received complete player-input packet.
+ *
+ * Contains four bytes, excluding SOF.
+ *
+ * Updated by the UART interrupt callback and read by the main loop.
+ * 
+ *   [0] Player 1 Row + Special
+ *   [1] Player 1 Column
+ *   [2] Player 2 Row + Special
+ *   [3] Player 2 Column
+ * 
+ * Special bit is the MSB of the Row byte.
+ * 
+ */
+static volatile uint8_t player_data[PLAYER_DATA_SIZE];
+
+/**
+ * @brief Indicates that a complete UART packet has been received.
+ */
+static volatile uint8_t data_received = 0;
+
+/**
+ * @brief Buffer for USB CDC transmission.
+ */
+static uint8_t usb_buffer[PLAYER_DATA_SIZE];
 
 /* USER CODE END PV */
 
@@ -67,9 +111,6 @@ void SystemClock_Config(void);
 
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
-static void MX_USART2_UART_Init(void);
-static void MX_USART3_UART_Init(void);
-static void MX_UART4_Init(void);
 
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
@@ -104,31 +145,19 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART1_UART_Init();
-  MX_USART2_UART_Init();
-  MX_USART3_UART_Init();
-  MX_UART4_Init();
   MX_USB_DEVICE_Init();
 
   /* USER CODE BEGIN 2 */
 
   /**
-   * @brief Start interrupt-driven receive on the four UARTs.
+   * @brief Start interrupt-driven receive on UART1.
    *
    * HAL_UART_Receive_IT() configures each UART to receive one byte.
    *
    * When one byte has been received, the HAL invokes
    * HAL_UART_RxCpltCallback() through the UART interrupt handler.
    */
-  if (HAL_UART_Receive_IT(&huart1, &uart_rx[0], 1) != HAL_OK)
-    Error_Handler();
-
-  if (HAL_UART_Receive_IT(&huart2, &uart_rx[1], 1) != HAL_OK)
-    Error_Handler();
-
-  if (HAL_UART_Receive_IT(&huart3, &uart_rx[2], 1) != HAL_OK)
-    Error_Handler();
-
-  if (HAL_UART_Receive_IT(&huart4, &uart_rx[3], 1) != HAL_OK)
+  if (HAL_UART_Receive_IT(&huart1, &uart_rx, 1) != HAL_OK)
     Error_Handler();
 
   /* USER CODE END 2 */
@@ -137,40 +166,36 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    // If at least one UART has received a byte
-    if (data_updated)
+    if (!data_received || hUsbDeviceFS.dev_state != USBD_STATE_CONFIGURED)
     {
-      if (hUsbDeviceFS.dev_state == USBD_STATE_CONFIGURED)
-      {
-        // Get USB CDC struct
-        USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef *)hUsbDeviceFS.pClassData;
-
-        // USB CDC is available and Tx is idle
-        if (hcdc != NULL && hcdc->TxState == 0)
-        {
-          __disable_irq();
-
-          usb_buffer[0] = player_data[0];
-          usb_buffer[1] = player_data[1];
-          usb_buffer[2] = player_data[2];
-          usb_buffer[3] = player_data[3];
-
-          data_updated = 0;
-
-          __enable_irq();
-
-          if (CDC_Transmit_FS(usb_buffer, sizeof(usb_buffer)) != USBD_OK)
-          {
-            data_updated = 1;
-          }
-        }
-      }
+      continue;
     }
+    // Get USB CDC struct
+    USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef *)hUsbDeviceFS.pClassData;
+
+    // Skip if USB CDC is  not available or Tx is not idle
+    if (hcdc == NULL || hcdc->TxState != 0)
+    {
+      continue;
+    }
+
+    for (uint8_t i = 0; i < PLAYER_DATA_SIZE; i++)
+    {
+      usb_buffer[i] = player_data[i];
+    }
+
+    data_received = 0;
+
+    if (CDC_Transmit_FS(usb_buffer, sizeof(usb_buffer)) != USBD_OK)
+    {
+      data_received = 1;
+    }
+  }
 
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-  }
+
   /* USER CODE END 3 */
 }
 
@@ -248,81 +273,6 @@ static void MX_USART1_UART_Init(void)
 }
 
 /**
-  * @brief USART2 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USART2_UART_Init(void)
-{
-  huart2.Instance = USART2;
-  huart2.Init.BaudRate = 115200;
-  huart2.Init.WordLength = UART_WORDLENGTH_8B;
-  huart2.Init.StopBits = UART_STOPBITS_1;
-  huart2.Init.Parity = UART_PARITY_NONE;
-  huart2.Init.Mode = UART_MODE_RX;
-  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
-
-  if (HAL_UART_Init(&huart2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-}
-
-/**
-  * @brief USART3 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USART3_UART_Init(void)
-{
-  /* USER CODE BEGIN USART3_Init 0 */
-  /* USER CODE END USART3_Init 0 */
-
-  /* USER CODE BEGIN USART3_Init 1 */
-  /* USER CODE END USART3_Init 1 */
-
-  huart3.Instance = USART3;
-  huart3.Init.BaudRate = 115200;
-  huart3.Init.WordLength = UART_WORDLENGTH_8B;
-  huart3.Init.StopBits = UART_STOPBITS_1;
-  huart3.Init.Parity = UART_PARITY_NONE;
-  huart3.Init.Mode = UART_MODE_RX;
-  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
-
-  if (HAL_UART_Init(&huart3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /* USER CODE BEGIN USART3_Init 2 */
-  /* USER CODE END USART3_Init 2 */
-}
-
-/**
-  * @brief UART4 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_UART4_Init(void)
-{
-  huart4.Instance = UART4;
-  huart4.Init.BaudRate = 115200;
-  huart4.Init.WordLength = UART_WORDLENGTH_8B;
-  huart4.Init.StopBits = UART_STOPBITS_1;
-  huart4.Init.Parity = UART_PARITY_NONE;
-  huart4.Init.Mode = UART_MODE_RX;
-  huart4.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart4.Init.OverSampling = UART_OVERSAMPLING_16;
-
-  if (HAL_UART_Init(&huart4) != HAL_OK)
-  {
-    Error_Handler();
-  }
-}
-
-/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -380,27 +330,59 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+
+/**
+ * @brief UART rx-complete callback.
+ *
+ * @details
+ * Invoked by STM32 HAL whenever USART1 receives a byte.
+ *
+ * UART packets have the following structure:
+ *   [SOF] [P1_ROW] [P1_COL] [P2_ROW] [P2_COL]
+ *
+ * SOF is always 0xFA.
+ *
+ * @param huart Pointer to the UART handle whose receive completed.
+ *
+ * @retval None
+ */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-  uint8_t index;
-
-  if (huart->Instance == USART1)
-    index = 0;
-  else if (huart->Instance == USART2)
-    index = 1;
-  else if (huart->Instance == USART3)
-    index = 2;
-  else if (huart->Instance == UART4)
-    index = 3;
-  else
+  if (huart->Instance != USART1)
+  {
     return;
+  }
 
-  player_data[index] = uart_rx[index];
-  data_updated = 1;
+  // rx_index == 0 means that rx is waiting for SOF.
+  if (rx_index == 0)
+  {
+    if (uart_rx == SOF)
+    {
+      rx_packet[0] = uart_rx;
+      ++rx_index;
+    }
+  }
+  else
+  {
+    rx_packet[rx_index] = uart_rx;
+    ++rx_index;
 
-  /* Restart reception */
-  HAL_UART_Receive_IT(huart, &uart_rx[index], 1);
+    if (rx_index == PACKET_SIZE)
+    {
+      player_data[0] = rx_packet[1];
+      player_data[1] = rx_packet[2];
+      player_data[2] = rx_packet[3];
+      player_data[3] = rx_packet[4];
+
+      data_received = 1;
+      rx_index = 0;
+    }
+  }
+
+  // Reset USART1 to receive the next byte.
+  HAL_UART_Receive_IT(&huart1, &uart_rx, 1);
 }
+
 
 /* USER CODE END 4 */
 
