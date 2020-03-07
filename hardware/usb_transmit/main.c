@@ -46,7 +46,7 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart3;
 
 
 /* USER CODE BEGIN PV */
@@ -110,7 +110,7 @@ static uint8_t usb_buffer[PLAYER_DATA_SIZE];
 void SystemClock_Config(void);
 
 static void MX_GPIO_Init(void);
-static void MX_USART1_UART_Init(void);
+static void MX_USART3_UART_Init(void);
 
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
@@ -144,20 +144,20 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_USART1_UART_Init();
+  MX_USART3_UART_Init();
   MX_USB_DEVICE_Init();
 
   /* USER CODE BEGIN 2 */
 
   /**
-   * @brief Start interrupt-driven receive on UART1.
+   * @brief Start interrupt-driven receive on UART3.
    *
    * HAL_UART_Receive_IT() configures each UART to receive one byte.
    *
    * When one byte has been received, the HAL invokes
    * HAL_UART_RxCpltCallback() through the UART interrupt handler.
    */
-  if (HAL_UART_Receive_IT(&huart1, &uart_rx, 1) != HAL_OK)
+  if (HAL_UART_Receive_IT(&huart3, &uart_rx, 1) != HAL_OK)
     Error_Handler();
 
   /* USER CODE END 2 */
@@ -251,22 +251,22 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief USART1 Initialization Function
+  * @brief USART3 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_USART1_UART_Init(void)
+static void MX_USART3_UART_Init(void)
 {
-  huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
-  huart1.Init.WordLength = UART_WORDLENGTH_8B;
-  huart1.Init.StopBits = UART_STOPBITS_1;
-  huart1.Init.Parity = UART_PARITY_NONE;
-  huart1.Init.Mode = UART_MODE_RX;
-  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
 
-  if (HAL_UART_Init(&huart1) != HAL_OK)
+  if (HAL_UART_Init(&huart3) != HAL_OK)
   {
     Error_Handler();
   }
@@ -335,7 +335,7 @@ static void MX_GPIO_Init(void)
  * @brief UART rx-complete callback.
  *
  * @details
- * Invoked by STM32 HAL whenever USART1 receives a byte.
+ * Invoked by STM32 HAL whenever USART3 receives a byte.
  *
  * UART packets have the following structure:
  *   [SOF] [P1_ROW] [P1_COL] [P2_ROW] [P2_COL]
@@ -348,7 +348,7 @@ static void MX_GPIO_Init(void)
  */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-  if (huart->Instance != USART1)
+  if (huart->Instance != USART3)
   {
     return;
   }
@@ -379,8 +379,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     }
   }
 
-  // Reset USART1 to receive the next byte.
-  HAL_UART_Receive_IT(&huart1, &uart_rx, 1);
+  // Reset USART3 to receive the next byte.
+  HAL_UART_Receive_IT(&huart3, &uart_rx, 1);
 }
 
 
