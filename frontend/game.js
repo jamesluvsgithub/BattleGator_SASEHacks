@@ -239,8 +239,6 @@ function playSound(name) {
   } catch (e) {}
 }
 
-
-
 function playAttack(boardId, row, col, pos, total) {
   const board = document.getElementById(boardId);
   if (!board) return;
@@ -266,9 +264,6 @@ function playMiss(boardId, row, col) {
     cell.innerHTML = `<img src="${SPRITE.miss.end}" width="64" height="64">`;
   }, GIF_DURATION.miss);
 }
-
-
-
 
 function initPlacement() {
   document.getElementById('placement-section').style.display = 'block';
@@ -410,8 +405,6 @@ function showBattle() {
   renderBoard('player-board', state.playerGrid, true);
 }
 
-
-
 function fireAt(row, col) {
   const cell = state.enemyGrid[row][col];
   if (cell === 'hit' || cell === 'miss' || cell === 'sunk') return;
@@ -435,7 +428,6 @@ function resolveAttack(grid, row, col) {
   }
   return 'miss';
 }
-
 
 function applyAttackResult(grid, row, col, result) {
   const boardId  = (grid === state.playerGrid) ? 'player-board' : 'enemy-board';
@@ -502,8 +494,6 @@ function checkLoss() {
     playSound('losing');
   }
 }
-
-
 
 function renderBoard(boardId, grid, isPlayer) {
   const boardEl = document.getElementById(boardId);

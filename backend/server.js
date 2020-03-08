@@ -10,7 +10,6 @@ const io     = new Server(server);
 const PORT = process.env.PORT || 3000;
 const HARDWARE_TOKEN = process.env.HARDWARE_TOKEN;
 
-// BattleGator uses a 7-by-7 grid.
 const GRID_ROWS = 7;
 const GRID_COLS = 7;
 
